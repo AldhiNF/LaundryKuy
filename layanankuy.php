@@ -200,7 +200,7 @@ if (isset($_POST['btn_hapus'])) {
                                     </td>
                                     
                                     <td class="fw-bold text-success fs-5">
-                                        Rp <?php echo number_format($r['harga_fix'], 0, ',', '.'); ?> <span class="text-muted fs-6 fw-normal">/ Satuan</span>
+                                        Rp <?php echo number_format($r['harga_fix'], 0, ',', '.'); ?> <span class="text-muted fs-6 fw-normal">/ Kilogram</span>
                                     </td>
 
                                     <!-- Kolom Estimasi -->
