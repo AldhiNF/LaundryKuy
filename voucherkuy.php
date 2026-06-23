@@ -46,8 +46,10 @@ if (isset($_POST['btn_tambah_voucher'])) {
     $min_trx      = (float) ($_POST['min_transaksi'] ?? 0);
     $max_diskon   = (float) ($_POST['max_diskon'] ?? 0);
     $kuota        = (int)   ($_POST['kuota'] ?? 0);
-    $tgl_mulai    = $_POST['tgl_mulai'] ?? null;
-    $tgl_selesai  = $_POST['tgl_selesai'] ?? null;
+    
+    // PERBAIKAN: Cek apakah input tanggal kosong. Jika kosong (""), jadikan NULL.
+    $tgl_mulai    = !empty($_POST['tgl_mulai']) ? $_POST['tgl_mulai'] : null;
+    $tgl_selesai  = !empty($_POST['tgl_selesai']) ? $_POST['tgl_selesai'] : null;
 
     // Validasi persen tidak boleh lebih dari 100
     if ($tipe === 'persen' && $nilai > 100) {
@@ -56,10 +58,12 @@ if (isset($_POST['btn_tambah_voucher'])) {
         $stmt = mysqli_prepare($koneksi,
             "INSERT INTO t_voucher (kode, nama, tipe, nilai, min_transaksi, max_diskon, kuota, tgl_mulai, tgl_selesai)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        mysqli_stmt_bind_param($stmt, "sssdddisd",
+        
+        // PERBAIKAN: bind param diubah dari "sssdddisd" menjadi "sssdddiss" (2 parameter terakhir adalah string/date)
+        mysqli_stmt_bind_param($stmt, "sssdddiss",
             $kode, $nama, $tipe, $nilai, $min_trx, $max_diskon, $kuota, $tgl_mulai, $tgl_selesai);
+            
         if (mysqli_stmt_execute($stmt)) {
-            // [FIX] Hapus tag <strong> agar aman di SweetAlert text:
             $pesan_sukses = "Voucher $kode berhasil dibuat!";
         } else {
             $pesan_error = mysqli_errno($koneksi) == 1062
