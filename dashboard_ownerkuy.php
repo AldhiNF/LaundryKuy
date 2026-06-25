@@ -97,56 +97,33 @@ mysqli_stmt_close($q);
 $q = mysqli_query($koneksi, "SELECT COUNT(*) as v FROM t_transaksi WHERE st_cuci='proses'");
 $antrian = (int)mysqli_fetch_assoc($q)['v'];
 
-// ── GRAFIK 1 & 2: 12 BULAN TERAKHIR ─────────────────────────────────
-// [FIX BUG A] Ganti 24 query loop menjadi 2 query GROUP BY YEAR/MONTH.
-// Hasilnya di-map ke array 12 slot bulan yang sudah disiapkan lebih dulu.
-$g1_labels = []; $g1_data = []; $g2_pendapatan = []; $g2_pengeluaran = [];
-$bulan_map = []; // key: 'YYYY-MM' => index
-
+// ── GRAFIK 1: PENDAPATAN 12 BULAN TERAKHIR ───────────────────────────
+$g1_labels = []; $g1_data = [];
 for ($i = 11; $i >= 0; $i--) {
-    $ts          = strtotime("-$i months", mktime(0,0,0,$f_bulan,1,$f_tahun));
-    $key         = date('Y-m', $ts);
+    $ts   = strtotime("-$i months", mktime(0,0,0,$f_bulan,1,$f_tahun));
+    $tgl1 = date('Y-m-01', $ts);
+    $tgl2 = date('Y-m-t',  $ts);
     $g1_labels[] = date('M Y', $ts);
-    $g1_data[]         = 0.0;
-    $g2_pendapatan[]   = 0.0;
-    $g2_pengeluaran[]  = 0.0;
-    $bulan_map[$key]   = 11 - $i;
+    $q = mysqli_prepare($koneksi, "SELECT COALESCE(SUM(total),0) as v FROM t_transaksi WHERE st_bayar='lunas' AND DATE(tgl) BETWEEN ? AND ?");
+    mysqli_stmt_bind_param($q,"ss",$tgl1,$tgl2); mysqli_stmt_execute($q);
+    $g1_data[] = (float)mysqli_fetch_assoc(mysqli_stmt_get_result($q))['v']; mysqli_stmt_close($q);
 }
 
-$tgl_12_awal  = date('Y-m-01', strtotime("-11 months", mktime(0,0,0,$f_bulan,1,$f_tahun)));
-$tgl_12_akhir = date('Y-m-t',  mktime(0,0,0,$f_bulan,1,$f_tahun));
-
-// 1 query pendapatan per bulan
-$q = mysqli_prepare($koneksi,
-    "SELECT DATE_FORMAT(tgl,'%Y-%m') as bln, COALESCE(SUM(total),0) as v
-     FROM t_transaksi WHERE st_bayar='lunas' AND DATE(tgl) BETWEEN ? AND ?
-     GROUP BY bln");
-mysqli_stmt_bind_param($q,"ss",$tgl_12_awal,$tgl_12_akhir);
-mysqli_stmt_execute($q);
-$res = mysqli_stmt_get_result($q);
-while ($r = mysqli_fetch_assoc($res)) {
-    if (isset($bulan_map[$r['bln']])) {
-        $idx = $bulan_map[$r['bln']];
-        $g1_data[$idx]       = (float)$r['v'];
-        $g2_pendapatan[$idx] = (float)$r['v'];
-    }
+// ── GRAFIK 2: PENDAPATAN vs PENGELUARAN 12 BULAN ─────────────────────
+$g2_pendapatan = []; $g2_pengeluaran = [];
+for ($i = 11; $i >= 0; $i--) {
+    $ts   = strtotime("-$i months", mktime(0,0,0,$f_bulan,1,$f_tahun));
+    $tgl1 = date('Y-m-01', $ts);
+    $tgl2 = date('Y-m-t',  $ts);
+    // Pendapatan
+    $q = mysqli_prepare($koneksi, "SELECT COALESCE(SUM(total),0) as v FROM t_transaksi WHERE st_bayar='lunas' AND DATE(tgl) BETWEEN ? AND ?");
+    mysqli_stmt_bind_param($q,"ss",$tgl1,$tgl2); mysqli_stmt_execute($q);
+    $g2_pendapatan[] = (float)mysqli_fetch_assoc(mysqli_stmt_get_result($q))['v']; mysqli_stmt_close($q);
+    // Pengeluaran
+    $q = mysqli_prepare($koneksi, "SELECT COALESCE(SUM(jumlah),0) as v FROM t_biaya_op WHERE DATE(tgl) BETWEEN ? AND ?");
+    mysqli_stmt_bind_param($q,"ss",$tgl1,$tgl2); mysqli_stmt_execute($q);
+    $g2_pengeluaran[] = (float)mysqli_fetch_assoc(mysqli_stmt_get_result($q))['v']; mysqli_stmt_close($q);
 }
-mysqli_stmt_close($q);
-
-// 1 query pengeluaran per bulan
-$q = mysqli_prepare($koneksi,
-    "SELECT DATE_FORMAT(tgl,'%Y-%m') as bln, COALESCE(SUM(jumlah),0) as v
-     FROM t_biaya_op WHERE DATE(tgl) BETWEEN ? AND ?
-     GROUP BY bln");
-mysqli_stmt_bind_param($q,"ss",$tgl_12_awal,$tgl_12_akhir);
-mysqli_stmt_execute($q);
-$res = mysqli_stmt_get_result($q);
-while ($r = mysqli_fetch_assoc($res)) {
-    if (isset($bulan_map[$r['bln']])) {
-        $g2_pengeluaran[$bulan_map[$r['bln']]] = (float)$r['v'];
-    }
-}
-mysqli_stmt_close($q);
 
 // ── GRAFIK 3: PAKET TERLARIS BULAN INI ───────────────────────────────
 $q = mysqli_prepare($koneksi,
@@ -165,12 +142,9 @@ while ($r = mysqli_fetch_assoc($hasil_paket)) {
 mysqli_stmt_close($q);
 
 // ── 5 TRANSAKSI TERAKHIR ──────────────────────────────────────────────
-// [FIX BUG B] Ganti JOIN -> LEFT JOIN agar transaksi tetap muncul
-// meski pelanggannya sudah dihapus.
 $q_recent = mysqli_query($koneksi,
-    "SELECT t.id_trans, COALESCE(p.nama,'(Pelanggan Dihapus)') as nama,
-            t.st_bayar, t.st_cuci, t.total, t.tgl
-     FROM t_transaksi t LEFT JOIN t_pelanggan p ON t.id_pel = p.id_pel
+    "SELECT t.id_trans, p.nama, t.st_bayar, t.st_cuci, t.total, t.tgl
+     FROM t_transaksi t JOIN t_pelanggan p ON t.id_pel = p.id_pel
      ORDER BY t.id_trans DESC LIMIT 5");
 ?>
 <!DOCTYPE html>
@@ -416,7 +390,7 @@ $q_recent = mysqli_query($koneksi,
                                     </div>
                                     <div>
                                         <div class="fw-semibold small" style="color:var(--text-dark,#1e2d40); line-height:1.2;">
-                                            <?php echo htmlspecialchars($r['nama']); // [FIX BUG C] Cegah XSS ?>
+                                            <?php echo htmlspecialchars($r['nama']); ?>
                                         </div>
                                         <div style="font-size:10px; color:#7a92a8;">
                                             <?php echo date('d M Y', strtotime($r['tgl'])); ?>
@@ -461,25 +435,27 @@ const CREAM = '#f5edd8';
 
 // ── Chart 1: Pendapatan 12 Bulan ───────────────────────────────────────
 new Chart(document.getElementById('chartPendapatan'), {
-    type: 'bar',
+    type: 'line', // [FIX] Ganti bar -> line agar tren lebih jelas
     data: {
         labels: <?php echo json_encode($g1_labels); ?>,
         datasets: [{
             label: 'Pendapatan',
             data: <?php echo json_encode($g1_data); ?>,
-            backgroundColor: (ctx) => {
-                // Bar bulan aktif warna gold, lainnya navy
-                const idx = ctx.dataIndex;
-                const isActive = idx === <?php echo 11; ?>;
-                return isActive ? GOLD : NAVY;
-            },
-            borderRadius: 6,
-            borderSkipped: false,
+            borderColor: NAVY,
+            backgroundColor: 'rgba(30,45,64,0.07)',
+            fill: true,
+            tension: 0.4,
+            borderWidth: 2.5,
+            pointBackgroundColor: (ctx) => ctx.dataIndex === 11 ? GOLD : NAVY,
+            pointBorderColor: '#fff',
+            pointRadius: (ctx) => ctx.dataIndex === 11 ? 7 : 4,
+            pointBorderWidth: 2,
         }]
     },
     options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false },
+        plugins: {
+            legend: { display: false },
             tooltip: { callbacks: { label: ctx => FMT(ctx.raw) } }
         },
         scales: {
@@ -507,11 +483,50 @@ new Chart(document.getElementById('chartPaket'), {
     options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
-            legend: { position: 'bottom', labels: { font: { size: 10 }, padding: 8 } },
-            tooltip: { callbacks: { label: ctx => ctx.label + ': ' + ctx.raw + ' order' } }
+            legend: { position: 'bottom', labels: { font: { size: 10 }, padding: 8,
+                generateLabels: chart => {
+                    const data = chart.data;
+                    const total = data.datasets[0].data.reduce((a,b)=>a+b,0);
+                    return data.labels.map((lbl,i) => ({
+                        text: lbl + ' (' + Math.round(data.datasets[0].data[i]/total*100) + '%)',
+                        fillStyle: data.datasets[0].backgroundColor[i],
+                        index: i
+                    }));
+                }
+            }},
+            tooltip: {
+                callbacks: {
+                    label: ctx => {
+                        const total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                        const pct   = Math.round(ctx.raw/total*100);
+                        return ctx.label + ': ' + ctx.raw + ' order (' + pct + '%)';
+                    }
+                }
+            },
+            // [FIX] Tampilkan % di tengah setiap slice
+            datalabels: false
         },
-        cutout: '60%'
-    }
+        cutout: '55%'
+    },
+    plugins: [{
+        id: 'pieLabels',
+        afterDatasetDraw(chart) {
+            const {ctx, data} = chart;
+            const total = data.datasets[0].data.reduce((a,b)=>a+b,0);
+            chart.getDatasetMeta(0).data.forEach((arc, i) => {
+                const pct = Math.round(data.datasets[0].data[i] / total * 100);
+                if (pct < 4) return; // jangan tampil jika terlalu kecil
+                const {x, y} = arc.tooltipPosition();
+                ctx.save();
+                ctx.font = 'bold 11px Plus Jakarta Sans, Arial';
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(pct + '%', x, y);
+                ctx.restore();
+            });
+        }
+    }]
 });
 <?php endif; ?>
 

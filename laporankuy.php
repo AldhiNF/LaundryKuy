@@ -11,7 +11,6 @@
  */
 
 session_start();
-ob_start();
 
 $halaman_aktif = 'laporan';
 include 'connectkuy.php';
@@ -286,13 +285,10 @@ if ($mode_export === 'excel') {
     //      18=header_merah, 19=zebra_genap, 20=zebra_ganjil, 21=ttl_merah, 22=ttl_merah_angka
     //      23=header_teal, 24=ttl_teal, 25=info_kecil, 26=medal
 
-    ob_end_clean();
-    $safe_label = preg_replace('/[^a-zA-Z0-9_-]/', '_', $label_periode);
     header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="Laporan_LaundryKuy_' . $safe_label . '.xls"');
-    header('Cache-Control: max-age=0, must-revalidate');
-    header('Pragma: public');
-    header('Expires: 0');
+    header('Content-Disposition: attachment; filename="Laporan_LaundryKuy_' . $label_periode . '.xls"');
+    header('Cache-Control: max-age=0');
+    header('Pragma: no-cache');
 
     // Mulai output XML
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
@@ -944,25 +940,14 @@ $is_pdf = ($mode_export === 'pdf');
             .tbl-laporan thead th { padding: 6px 8px !important; }
             .tbl-laporan tbody td { padding: 5px 8px !important; }
 
-            .chart-wrap, canvas {
-                display: none !important;
-                height: 0 !important;
-                min-height: 0 !important;
-                max-height: 0 !important;
-                overflow: hidden !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
+            /* Chart: sembunyikan (tidak bisa print canvas dengan baik) */
+            .chart-wrap { display: none !important; }
 
+            /* Page break antar section */
             .page-break {
                 page-break-before: always !important;
                 break-before: always !important;
             }
-            .card-laporan:last-of-type {
-                page-break-after: avoid !important;
-                break-after: avoid !important;
-            }
-            .tbl-laporan tr { page-break-inside: avoid !important; }
 
             /* Header print muncul */
             .d-print-block { display: block !important; }
@@ -971,12 +956,8 @@ $is_pdf = ($mode_export === 'pdf');
             .progress { height: 8px !important; }
         }
 
-        @page {
-            size: A4 portrait;
-            margin: 10mm 8mm 0 8mm;
-        }
-        @page:first { margin-top: 6mm; }
-
+        /* Ukuran kertas A4 landscape untuk laporan yang lebar */
+        @page { size: A4 portrait; margin: 10mm 8mm; }
     </style>
 </head>
 <body>
@@ -1158,24 +1139,81 @@ $is_pdf = ($mode_export === 'pdf');
                 </div>
             </div>
 
-            <!-- Rincian pengeluaran per kategori -->
+            <!-- [FIX] Rincian pengeluaran per kategori: progress bar -> diagram batang Chart.js -->
             <?php if (count($data_kategori) > 0): ?>
-            <h6 class="fw-bold text-muted mb-3"><i class="bi bi-list-ul me-1"></i>Rincian Pengeluaran per Kategori</h6>
-            <div class="row g-2">
-                <?php foreach ($data_kategori as $kat):
-                    $persen_kat = $total_pengeluaran > 0 ? round(($kat['total'] / $total_pengeluaran) * 100) : 0;
-                ?>
-                <div class="col-md-6">
-                    <div class="d-flex justify-content-between mb-1 small fw-semibold">
-                        <span><?php echo htmlspecialchars($kat['kategori']); ?></span>
-                        <span class="text-danger">Rp <?php echo number_format($kat['total'],0,',','.'); ?> (<?php echo $persen_kat; ?>%)</span>
-                    </div>
-                    <div class="progress mb-2">
-                        <div class="progress-bar bg-danger" style="width:<?php echo $persen_kat; ?>%"></div>
-                    </div>
-                </div>
-                <?php endforeach; ?>
+            <h6 class="fw-bold text-muted mb-3"><i class="bi bi-bar-chart-fill me-1"></i>Pengeluaran per Kategori</h6>
+            <div style="position:relative; height:<?php echo min(40 + count($data_kategori)*44, 320); ?>px;">
+                <canvas id="chartKategoriPengeluaran"></canvas>
             </div>
+            <!-- Tabel ringkasan di bawah grafik -->
+            <div class="table-responsive mt-3">
+                <table class="table table-sm table-borderless mb-0">
+                    <thead><tr class="text-muted small">
+                        <th>Kategori</th><th class="text-end">Jumlah</th><th class="text-end">Porsi</th>
+                    </tr></thead>
+                    <tbody>
+                    <?php foreach ($data_kategori as $kat):
+                        $persen_kat = $total_pengeluaran > 0 ? round(($kat['total']/$total_pengeluaran)*100) : 0;
+                    ?>
+                    <tr>
+                        <td class="fw-semibold small"><?php echo htmlspecialchars($kat['kategori']); ?></td>
+                        <td class="text-end small text-danger">Rp <?php echo number_format($kat['total'],0,',','.'); ?></td>
+                        <td class="text-end small text-muted"><?php echo $persen_kat; ?>%</td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <script>
+            (function(){
+                var katLabels = <?php echo json_encode(array_column($data_kategori,'kategori')); ?>;
+                var katData   = <?php echo json_encode(array_map(function($k){return (float)$k['total'];}, $data_kategori)); ?>;
+                var katColors = [
+                    '#dc3545','#e85d04','#f48c06','#2d6a4f','#1e3a5f',
+                    '#6a0572','#0077b6','#555555','#c9a96e','#2e86ab'
+                ];
+                function fmtRp(v){
+                    return 'Rp ' + v.toLocaleString('id-ID');
+                }
+                new Chart(document.getElementById('chartKategoriPengeluaran'), {
+                    type: 'bar',
+                    data: {
+                        labels: katLabels,
+                        datasets: [{
+                            label: 'Pengeluaran',
+                            data: katData,
+                            backgroundColor: katColors.slice(0, katLabels.length),
+                            borderRadius: 6,
+                            borderSkipped: false,
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y', // horizontal bar agar label kategori terbaca jelas
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: ctx => ' ' + fmtRp(ctx.raw)
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                beginAtZero: true,
+                                ticks: { callback: v => fmtRp(v), font: { size: 10 } },
+                                grid: { color: 'rgba(0,0,0,0.05)' }
+                            },
+                            y: {
+                                ticks: { font: { size: 11 }, color: '#374151' },
+                                grid: { display: false }
+                            }
+                        }
+                    }
+                });
+            })();
+            </script>
             <?php else: ?>
             <p class="text-muted text-center py-3"><i class="bi bi-inbox me-2"></i>Tidak ada pengeluaran di periode ini.</p>
             <?php endif; ?>
