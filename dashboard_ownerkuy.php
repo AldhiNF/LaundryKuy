@@ -477,7 +477,7 @@ new Chart(document.getElementById('chartPaket'), {
             data: <?php echo json_encode($g3_data); ?>,
             backgroundColor: [GOLD,'#1e2d40','#2e4d6e','#c9a96e88','#3d6491','#e8d5b7'],
             borderWidth: 2,
-            borderColor: '#fff'
+            borderColor: '#000000'
         }]
     },
     options: {
