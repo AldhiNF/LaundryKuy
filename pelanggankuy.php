@@ -85,13 +85,17 @@ if (isset($_POST['btn_ganti_pw_owner'])) {
 // =================================================================================
 if (isset($_POST['btn_edit'])) {
     // Tangkap data dari form modal
-    $id_pel = $_POST['id_pel']; // ID tidak perlu di-escape karena tidak diinput manual (hidden)
-    
-    // mysqli_real_escape_string digunakan untuk mensterilkan teks inputan dari simbol-simbol 
-    // aneh (seperti tanda petik) yang berpotensi merusak struktur database atau disalahgunakan hacker.
-    $nama   = mysqli_real_escape_string($koneksi, $_POST['nama']);
+    // [FIX] id_pel dipaksa jadi integer walau berasal dari hidden input, agar konsisten
+    // dengan tipe bind parameter "i" di bawah dan tidak bergantung pada asumsi input aman.
+    $id_pel = (int) $_POST['id_pel'];
+
+    // [FIX] Tidak perlu mysqli_real_escape_string lagi di sini karena nilai akan
+    // dikirim lewat prepared statement (mysqli_stmt_bind_param), bukan digabung ke
+    // string SQL. Prepared statement sudah menangani escaping secara otomatis di level
+    // driver, jadi escape manual justru berisiko menyimpan backslash literal ganda.
+    $nama   = trim($_POST['nama']);
     $hp     = preg_replace('/[^0-9]/', '', $_POST['hp']); // Hanya angka
-    $alamat = mysqli_real_escape_string($koneksi, $_POST['alamat']);
+    $alamat = trim($_POST['alamat']);
 
     // Validasi format HP Indonesia
     $valid_hp = preg_match('/^(08|628|62)[0-9]{7,12}$/', $hp);
@@ -100,7 +104,6 @@ if (isset($_POST['btn_edit'])) {
     } else {
         // Normalisasi: 628xx -> 08xx
         if (substr($hp, 0, 3) === '628') $hp = '0' . substr($hp, 2);
-        $hp = mysqli_real_escape_string($koneksi, $hp);
 
         // Cek duplikat HP — pastikan tidak ada pelanggan LAIN dengan HP yang sama
         $cek_hp = mysqli_prepare($koneksi, "SELECT id_pel, nama FROM t_pelanggan WHERE hp = ? AND id_pel != ?");
@@ -114,12 +117,19 @@ if (isset($_POST['btn_edit'])) {
             mysqli_stmt_close($cek_hp);
         } else {
             mysqli_stmt_close($cek_hp);
-            $query_edit = "UPDATE t_pelanggan SET nama='$nama', hp='$hp', alamat='$alamat' WHERE id_pel='$id_pel'";
-            if (mysqli_query($koneksi, $query_edit)) {
+
+            // [FIX] Query UPDATE diubah dari penggabungan string mentah menjadi
+            // prepared statement penuh, konsisten dengan pola keamanan di seluruh
+            // file lain (transaksikuy.php, riwayatkuy.php, voucherkuy.php, dst).
+            $stmt_edit = mysqli_prepare($koneksi, "UPDATE t_pelanggan SET nama = ?, hp = ?, alamat = ? WHERE id_pel = ?");
+            mysqli_stmt_bind_param($stmt_edit, "sssi", $nama, $hp, $alamat, $id_pel);
+
+            if (mysqli_stmt_execute($stmt_edit)) {
                 $pesan_sukses = "Data pelanggan berhasil diperbarui!";
             } else {
                 $pesan_error = "Gagal memperbarui data: " . mysqli_error($koneksi);
             }
+            mysqli_stmt_close($stmt_edit);
         }
     } // end validasi HP
 }
@@ -243,19 +253,21 @@ if (isset($_POST['btn_hapus'])) {
                                     <td class="text-center fw-bold"><?php echo $no++; ?></td>
                                     
                                     <!-- Menampilkan Nama -->
-                                    <td class="fw-bold text-dark"><?php echo $r['nama']; ?></td>
+                                    <!-- [FIX XSS] htmlspecialchars() mencegah karakter HTML dalam data tersimpan
+                                         (mis. nama yang diketik mengandung tanda < atau >) dieksekusi sebagai kode. -->
+                                    <td class="fw-bold text-dark"><?php echo htmlspecialchars($r['nama']); ?></td>
                                     
                                     <!-- Menampilkan Nomor HP sekaligus dijadikan Link WhatsApp -->
                                     <td>
                                         <!-- Fungsi preg_replace('/^0/', '62', text) digunakan untuk: 
                                              Mencari Angka '0' di AWAL teks, lalu mengubahnya jadi '62' (Kode negara Indonesia) -->
-                                        <a href="https://wa.me/<?php echo preg_replace('/^0/', '62', $r['hp']); ?>" target="_blank" class="text-decoration-none text-success fw-semibold">
-                                            <i class="bi bi-whatsapp me-1"></i><?php echo $r['hp']; ?>
+                                        <a href="https://wa.me/<?php echo htmlspecialchars(preg_replace('/^0/', '62', $r['hp'])); ?>" target="_blank" class="text-decoration-none text-success fw-semibold">
+                                            <i class="bi bi-whatsapp me-1"></i><?php echo htmlspecialchars($r['hp']); ?>
                                         </a>
                                     </td>
                                     
                                     <!-- Menampilkan Alamat. Jika kosong, tampilkan tanda '-' -->
-                                    <td class="text-muted"><?php echo $r['alamat'] != '' ? $r['alamat'] : '-'; ?></td>
+                                    <td class="text-muted"><?php echo $r['alamat'] != '' ? htmlspecialchars($r['alamat']) : '-'; ?></td>
                                     
                                     <!-- Kumpulan Tombol Aksi -->
                                     <td class="text-center">
@@ -298,7 +310,7 @@ if (isset($_POST['btn_hapus'])) {
                                                     <!-- value="<?php echo $r['kolom']; ?>" berguna untuk menaruh data lama ke dalam form -->
                                                     <div class="mb-3">
                                                         <label class="form-label fw-bold">Nama Lengkap</label>
-                                                        <input type="text" class="form-control" name="nama" value="<?php echo $r['nama']; ?>" required>
+                                                        <input type="text" class="form-control" name="nama" value="<?php echo htmlspecialchars($r['nama']); ?>" required>
                                                     </div>
                                                     
                                                     <div class="mb-3">
@@ -309,7 +321,7 @@ if (isset($_POST['btn_hapus'])) {
                                                             </span>
                                                             <input type="tel" class="form-control" name="hp"
                                                                 id="editHp<?php echo $r['id_pel']; ?>"
-                                                                value="<?php echo $r['hp']; ?>"
+                                                                value="<?php echo htmlspecialchars($r['hp']); ?>"
                                                                 placeholder="08xxxxxxxxxx"
                                                                 oninput="validasiHPEdit(this, 'infoHpEdit<?php echo $r['id_pel']; ?>')"
                                                                 required>
@@ -321,7 +333,7 @@ if (isset($_POST['btn_hapus'])) {
                                                     
                                                     <div class="mb-3">
                                                         <label class="form-label fw-bold">Alamat</label>
-                                                        <textarea class="form-control" name="alamat" rows="3"><?php echo $r['alamat']; ?></textarea>
+                                                        <textarea class="form-control" name="alamat" rows="3"><?php echo htmlspecialchars($r['alamat']); ?></textarea>
                                                     </div>
                                                 </div>
                                                 <div class="modal-footer bg-light rounded-bottom-4">
